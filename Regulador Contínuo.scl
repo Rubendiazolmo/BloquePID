@@ -1,0 +1,137 @@
+﻿FUNCTION_BLOCK "Regulador Contínuo"
+{ S7_Optimized_Access := 'FALSE' }
+VERSION : 0.1
+   VAR_INPUT 
+      Input : Real;
+   END_VAR
+   VAR_INPUT RETAIN
+      SetPoint : Real;
+   END_VAR
+
+   VAR_OUTPUT 
+      Output : Real;
+   END_VAR
+
+   VAR 
+      kp : Real;
+      ti : Real;
+      td : Real;
+      error_anterior : Array[1..2] of Real;   // 1 = error anterior, 2 = error anterior del anterior
+      integral_error : Real;
+      derivada_error : Real;
+      derivada_proceso : Real;
+      Regulador : Int;   // 1 = P, 2 = PI, 3 = PID, 4 PID (derivada proceso)
+      "dt" : Real := 0.001;
+      ponderacion_ti : Real := 1.0;
+      out : Real;
+      ponderacion_td : Real := 1.0;
+      proceso : Array[1..2] of Real;
+   END_VAR
+
+   VAR_TEMP 
+      error : Real;
+      I1 : Real;
+      I2 : Real;
+      tmp_int : Int;
+      tmp_real : Real;
+   END_VAR
+
+
+BEGIN
+	#error := #SetPoint - #Input; // Cálculo del error actual
+	
+	IF #SetPoint <> 0.0 THEN
+	    
+	    // Anti Wind-UP
+	    // Solo se calcula la integral del error cuando la salida del regulador no esté saturada.
+	    
+	    IF #out >= -10.0 AND #out <= 10.0 THEN
+	        
+	        // Cálculo de la integral del error utilizando el método de Romberg
+	        #I1 := #dt (*b - a*)* ((#error_anterior[2] (*f(a)*)+ #error_anterior[1] (*f(b)*)) / 2);
+	        #I2 := #dt (*b - a*)* ((#error_anterior[2] (*f(a)*)+ (2 * #error_anterior[1] (*f(b)*)) + #error(*f(c)*)) / 4);
+	        #integral_error := #integral_error + (4 * #I1 - #I2) / 3;
+	        
+	    END_IF;
+	    
+	    // Cálculo de derivadas
+	    #derivada_error   := ((3*#error)-(4*#error_anterior[1])+#error_anterior[2])/(2*#dt);
+	    #derivada_proceso := ((3*#Input)-(4*#proceso[1])+#proceso[2])/(2*#dt);
+	    
+	ELSE
+	    
+	    #integral_error   := 0;
+	    #derivada_error   := 0;
+	    #derivada_proceso := 0;
+	    
+	END_IF;
+	
+	// Limitar acción integral
+	(* IF #integral_error > 0.0 THEN
+	    
+	    IF #integral_error > 5.0 THEN
+	        
+	        #integral_error := 5.0;
+	
+	    END_IF;
+	    
+	ELSE
+	    
+	    IF #integral_error < -5.0 THEN
+	        
+	        #integral_error := -5.0;
+	        
+	    END_IF;
+	    
+	END_IF; *)
+	
+	IF #Regulador = 1 THEN //Regulador P
+	    
+	    #out := #error * #kp;
+	    
+	ELSIF #Regulador = 2 THEN //Regulador PI
+	    
+	    #out := #kp * #error + (#kp / #ti) * #integral_error;
+	    
+	ELSIF #Regulador = 3 THEN //Regulador PID, utilizando la derivada de la señal del error
+	
+	    #out := (#kp * #error) + ((#kp / #ti) * #integral_error) + (#ponderacion_td * (#kp * #td * #derivada_error));
+	    
+	ELSIF #Regulador = 4 THEN //Regulador PID, utilizando la derivada de la señal de proceso
+	    
+	    #out := (#kp * #error) + ((#kp / #ti) * #integral_error) + (#ponderacion_td * (#kp * #td * #derivada_proceso));
+	
+	END_IF;
+	
+	// Saturación de la acción de control
+	
+	IF #out > 10.0 THEN
+	    
+	    #Output := 10.0;
+	    
+	ELSIF #out < -10.0 THEN
+	    
+	    #Output := -10.0;
+	    
+	ELSE
+	    
+	    #Output := #out;
+	    
+	END_IF;
+	
+	// Guardar errores anteriores
+	#error_anterior[2] := #error_anterior[1]; // f(a)
+	#error_anterior[1] := #error; // f(b)
+	
+	// Redondeo de la entrada a 2 decimales
+	#tmp_real := #Input * 100;
+	#tmp_int  := REAL_TO_INT(#tmp_real);
+	#tmp_real := INT_TO_REAL(#tmp_int);
+	#tmp_real := #tmp_real / 100;
+	
+	// Guardar valores del proceso anteriores
+	#proceso[2] := #proceso[1];
+	#proceso[1] := #tmp_real;
+	
+END_FUNCTION_BLOCK
+
